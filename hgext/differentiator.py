@@ -1,9 +1,9 @@
 import json
 import os
 import re
+import subprocess
 
 from mercurial import (
-    pycompat,
     registrar,
     templatekw,
 )
@@ -23,10 +23,48 @@ def get_local_repo_callsign(ctx, repo) -> str:
     return arcconfig["repository.callsign"]
 
 
+def call_conduit(method: str, params: dict) -> dict:
+    """Call the Conduit API using the local binary.
+
+    Args:
+        method: The method name to call (e.g. differential.revision.search).
+        params: The parameters to pass in the API call.
+
+    Returns:
+        Parsed JSON response of the result.
+    """
+    params = json.dumps(params).encode("utf-8")
+    command = [
+        "/app/phabricator/bin/conduit",
+        "call",
+        "--method",
+        method,
+        "--input",
+        "-"
+    ]
+
+    out = subprocess.run(command, input=params, capture_output=True).stdout
+    result = json.loads(out)
+    return result
+
+
 def get_phab_server_callsign(differential_id: int) -> str:
-    """Takes a revision of the form `DXXX` and returns the repo callsign for the
-    given differential from the Conduit API."""
-    raise NotImplementedError("todo")
+    """Returns the repo "callsign" of the provided differential ID.
+
+    Args:
+        differential_id: The integer portion of the revision ID.
+
+    Returns:
+        A string representing the repo callsign fetched from Phabricator.
+    """
+    params = {"constraints": {"ids": [differential_id]}}
+    result = call_conduit("differential.revision.search", params)
+    repositoryPHID = result["result"]["data"][0]["fields"]["repositoryPHID"]
+    if repositoryPHID:
+        params = {"constraints": {"phids": [repositoryPHID]}}
+        result = call_conduit("diffusion.repository.search", params)
+        callsign = result["result"]["data"][0]["fields"]["callsign"]
+        return callsign
 
 
 def extsetup(ui):
@@ -67,4 +105,3 @@ def extsetup(ui):
             desc = differential_revision_re.sub(lambda _match: b"", desc)
 
         return desc
-
